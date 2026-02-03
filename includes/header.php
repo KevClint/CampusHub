@@ -15,6 +15,9 @@
             <a href="index.php" class="header-icon" title="Feed">
                 <span>🏠</span>
             </a>
+            <div class="search-bar mobile-search">
+                <button type="button" id="mobileSearchBtn" onclick="openSearchModal()">🔍</button>
+            </div>
             <a href="messages.php" class="header-icon" title="Messages">
                 <span>💬</span>
                 <span class="notification-badge" id="messagesBadge" style="display: none;"></span>
@@ -46,3 +49,44 @@
         </div>
     </div>
 </header>
+
+<!-- Search Modal for Mobile -->
+<div class="search-modal" id="searchModal">
+    <div class="search-modal-content">
+        <div class="search-modal-header">
+            <input type="text" placeholder="Search users, posts..." id="mobileSearchInput" onkeyup="performMobileSearch(this.value)">
+            <button type="button" class="search-modal-close" onclick="closeSearchModal()">✕</button>
+        </div>
+        <div class="search-modal-results" id="searchModalResults">
+            <p style="color: var(--text-muted); text-align: center; padding: 20px;">Start typing to search...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+function openSearchModal() {
+    document.getElementById('searchModal').classList.add('active');
+    document.getElementById('mobileSearchInput').focus();
+}
+
+function closeSearchModal() {
+    document.getElementById('searchModal').classList.remove('active');
+    document.getElementById('mobileSearchInput').value = '';
+}
+
+function performMobileSearch(query) {
+    if (query.trim().length === 0) {
+        document.getElementById('searchModalResults').innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 20px;">Start typing to search...</p>';
+        return;
+    }
+    
+    performSearch(query);
+}
+
+// Close modal when clicking outside
+document.getElementById('searchModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeSearchModal();
+    }
+});
+</script>
