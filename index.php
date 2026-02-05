@@ -35,7 +35,9 @@ $posts = $posts_stmt->fetchAll();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Feed - School Social</title>
+    <script src="assets/js/fouc-prevention.js"></script>
     <link rel="stylesheet" href="assets/css/style.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -61,13 +63,13 @@ $posts = $posts_stmt->fetchAll();
                 
                 <div class="sidebar-menu">
                     <a href="index.php" class="menu-item active">
-                        <span class="icon">🏠</span> Feed
+                        <i class="material-icons">home</i> Feed
                     </a>
                     <a href="messages.php" class="menu-item">
-                        <span class="icon">💬</span> Messages
+                        <i class="material-icons">chat_bubble</i> Messages
                     </a>
                     <a href="profile.php" class="menu-item">
-                        <span class="icon">👤</span> Profile
+                        <i class="material-icons">person</i> Profile
                     </a>
                 </div>
             </aside>
@@ -92,11 +94,11 @@ $posts = $posts_stmt->fetchAll();
                         <div class="create-post-footer">
                             <div style="display: flex; gap: 10px;">
                                 <label for="post-image" class="btn btn-secondary btn-sm">
-                                    📷 Photo
+                                    <i class="material-icons">photo_camera</i> Photo
                                     <input type="file" id="post-image" name="image" accept="image/*" style="display: none;">
                                 </label>
                                 <label for="post-video" class="btn btn-secondary btn-sm">
-                                    🎬 Video
+                                    <i class="material-icons">videocam</i> Video
                                     <input type="file" id="post-video" name="video" accept="video/*" style="display: none;">
                                 </label>
                             </div>
@@ -132,14 +134,14 @@ $posts = $posts_stmt->fetchAll();
                                 
                                 <?php if ($post['user_id'] == getCurrentUserId()): ?>
                                     <div class="dropdown">
-                                        <button class="btn-icon" onclick="toggleDropdown(this)">⋮</button>
+                                        <button class="btn-icon" onclick="toggleDropdown(this)"><i class="material-icons">more_vert</i></button>
                                         <div class="dropdown-menu">
                                             <a href="#" onclick="deletePost(<?php echo $post['id']; ?>)">Delete</a>
                                         </div>
                                     </div>
                                 <?php else: ?>
                                     <div class="dropdown">
-                                        <button class="btn-icon" onclick="toggleDropdown(this)">⋮</button>
+                                        <button class="btn-icon" onclick="toggleDropdown(this)"><i class="material-icons">more_vert</i></button>
                                         <div class="dropdown-menu">
                                             <a href="#" onclick="reportPost(<?php echo $post['id']; ?>)">Report</a>
                                         </div>
@@ -160,11 +162,11 @@ $posts = $posts_stmt->fetchAll();
                             <div class="post-actions">
                                 <button type="button" class="action-btn <?php echo $post['user_reacted'] ? 'active' : ''; ?>" 
                                         onclick="toggleReaction(<?php echo $post['id']; ?>, this)">
-                                    <span class="icon">❤️</span>
+                                    <i class="material-icons">favorite</i>
                                     <span class="count"><?php echo $post['reaction_count']; ?></span>
                                 </button>
                                 <button type="button" class="action-btn" onclick="toggleComments(<?php echo $post['id']; ?>)">
-                                    <span class="icon">💬</span>
+                                    <i class="material-icons">comment</i>
                                     <span class="count"><?php echo $post['comment_count']; ?></span>
                                 </button>
                             </div>

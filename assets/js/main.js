@@ -1,5 +1,41 @@
 // Main JavaScript for School Social Network
 
+/**
+ * Initialize notification updates on page load
+ * Updates the message badge periodically to show unread message count
+ */
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize notification badge on page load
+    updateNotificationBadgeFromMain();
+    
+    // Refresh notification badge every 10 seconds
+    setInterval(updateNotificationBadgeFromMain, 10000);
+});
+
+/**
+ * Update notification badge (wrapper for main.js context)
+ */
+async function updateNotificationBadgeFromMain() {
+    try {
+        const response = await fetch('api/mark_message_read.php?action=get_unread_count');
+        const data = await response.json();
+        
+        if (data && data.success) {
+            const badge = document.getElementById('messagesBadge');
+            if (badge) {
+                if (data.unread_count > 0) {
+                    badge.textContent = data.unread_count > 99 ? '99+' : data.unread_count;
+                    badge.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+    } catch (error) {
+        console.debug('Error updating notification badge:', error);
+    }
+}
+
 // Global search functionality
 const globalSearchInput = document.getElementById('globalSearch');
 if (globalSearchInput) {

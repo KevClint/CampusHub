@@ -65,7 +65,9 @@ if (isset($_GET['user'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Messages - School Social</title>
+    <script src="assets/js/fouc-prevention.js"></script>
     <link rel="stylesheet" href="assets/css/style.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -136,14 +138,21 @@ if (isset($_GET['user'])) {
     
     <!-- New Message Modal -->
     <div id="newMessageModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>New Message</h3>
-                <button class="btn-close" onclick="closeModal()">&times;</button>
+        <div class="modal-content" style="max-width: 480px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: white; position: relative;">
+                <div>
+                    <h3 style="margin: 0; color: white; font-size: 18px;">✉️ New Message</h3>
+                    <p style="margin: 4px 0 0; font-size: 12px; color: rgba(255, 255, 255, 0.8);">Select a user to message</p>
+                </div>
+                <button class="btn-close" style="color: white; font-size: 28px; opacity: 0.9; border: none; background: none; cursor: pointer;" onclick="closeModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <input type="text" id="userSearch" placeholder="Search users..." onkeyup="searchUsers(this.value)">
-                <div id="userResults" class="user-results"></div>
+            <div class="modal-body" style="padding: 0;">
+                <div style="padding: 16px; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; background: var(--bg-primary); z-index: 10;">
+                    <input type="text" id="userSearch" placeholder="Search by name or username..." 
+                           onkeyup="searchUsers(this.value)"
+                           style="width: 100%; padding: 12px 16px; border: 1.5px solid var(--border-color); border-radius: 20px; outline: none; font-family: inherit; font-size: 14px; transition: all 0.2s ease; box-sizing: border-box;">
+                </div>
+                <div id="userResults" style="max-height: 400px; overflow-y: auto; padding: 8px 0;"></div>
             </div>
         </div>
     </div>

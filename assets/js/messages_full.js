@@ -4,15 +4,367 @@ let currentPartnerInfo = null;
 let messageRefreshInterval = null;
 let pinnedMessagesVisible = false;
 
+// Status tracking intervals
+let statusPollInterval = null;
+let typingPollInterval = null;
+let onlineStatusInterval = null;
+let typingTimeout = null;
+let isTyping = false;
+let lastActivityTime = Date.now();
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Messaging system v2 initialized');
+    updateNotificationBadge();
+    
+    // Start heartbeat to keep user online
+    startUserHeartbeat();
+    
+    // Track user activity for online status
+    document.addEventListener('mousemove', updateUserActivity);
+    document.addEventListener('keypress', updateUserActivity);
+    document.addEventListener('click', updateUserActivity);
 });
+
+/**
+ * Start heartbeat to keep user's online status active
+ * Sends update every 30 seconds
+ */
+function startUserHeartbeat() {
+    updateUserActivity();
+    setInterval(updateUserActivity, 30000);
+}
+
+/**
+ * Update user's last activity timestamp
+ * Used for tracking online status
+ */
+async function updateUserActivity() {
+    const now = Date.now();
+    // Only update if 10+ seconds since last update (avoid excessive requests)
+    if (now - lastActivityTime < 10000) return;
+    
+    lastActivityTime = now;
+    
+    try {
+        await fetch('api/online_status.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=heartbeat'
+        });
+    } catch (error) {
+        console.debug('Activity update failed:', error);
+    }
+}
+
+/**
+ * Display message status indicators (✓ ✓✓ etc)
+ * Shows sent/delivered/seen status in UI
+ */
+function displayMessageStatus(messageEl, status) {
+    if (!messageEl) return;
+    
+    let statusIcon = '✓';     // sent
+    let statusColor = 'gray';
+    
+    if (status === 'delivered') {
+        statusIcon = '✓✓';
+        statusColor = 'gray';
+    } else if (status === 'seen') {
+        statusIcon = '✓✓';
+        statusColor = 'var(--primary)';
+    }
+    
+    let statusEl = messageEl.querySelector('.message-status');
+    if (!statusEl) {
+        statusEl = document.createElement('span');
+        statusEl.className = 'message-status';
+        messageEl.querySelector('.message-bubble')?.appendChild(statusEl);
+    }
+    
+    statusEl.textContent = statusIcon;
+    statusEl.style.cssText = `
+        font-size: 11px;
+        color: ${statusColor};
+        margin-left: 4px;
+        display: inline;
+    `;
+}
+
+/**
+ * Poll message statuses and update UI
+ * Called periodically to sync status from server
+ */
+async function pollMessageStatus() {
+    if (!currentConversationId) return;
+    
+    try {
+        const response = await fetch(`api/message_status.php?action=get_status&conversation_id=${currentConversationId}`);
+        const data = await response.json();
+        
+        if (!data.success) return;
+        
+        // Update UI for each message
+        Object.entries(data.statuses).forEach(([messageId, statusInfo]) => {
+            const messageEl = document.querySelector(`[data-msg-id="${messageId}"]`);
+            if (messageEl) {
+                displayMessageStatus(messageEl, statusInfo.status);
+            }
+        });
+    } catch (error) {
+        console.debug('Status poll error:', error);
+    }
+}
+
+/**
+ * Mark messages as delivered when loaded
+ * Called when messages are fetched
+ */
+async function markMessagesDelivered(conversationId) {
+    if (!conversationId) return;
+    
+    try {
+        await fetch('api/message_status.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `action=mark_delivered&conversation_id=${conversationId}`
+        });
+    } catch (error) {
+        console.debug('Mark delivered error:', error);
+    }
+}
+
+/**
+ * Mark messages as seen when conversation is opened
+ */
+async function markMessagesSeen(conversationId) {
+    if (!conversationId) return;
+    
+    try {
+        await fetch('api/message_status.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `action=mark_seen&conversation_id=${conversationId}`
+        });
+    } catch (error) {
+        console.debug('Mark seen error:', error);
+    }
+}
+
+/**
+ * Handle typing event - send typing status to server
+ */
+function handleTyping() {
+    if (!currentConversationId) return;
+    
+    if (!isTyping) {
+        isTyping = true;
+        sendTypingStatus('start');
+    }
+    
+    // Reset timeout
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        isTyping = false;
+        sendTypingStatus('stop');
+    }, 3000); // Stop typing after 3 seconds of inactivity
+}
+
+/**
+ * Send typing status to server
+ */
+async function sendTypingStatus(action) {
+    if (!currentConversationId) return;
+    
+    try {
+        const postAction = action === 'start' ? 'start_typing' : 'stop_typing';
+        await fetch('api/typing_indicator.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `action=${postAction}&conversation_id=${currentConversationId}`
+        });
+    } catch (error) {
+        console.debug('Typing status error:', error);
+    }
+}
+
+/**
+ * Display typing indicator in UI
+ * Shows "User is typing..." message
+ */
+function displayTypingIndicator(typingUsers) {
+    let typingEl = document.getElementById('typingIndicator');
+    
+    if (!typingUsers || typingUsers.length === 0) {
+        if (typingEl) {
+            typingEl.style.display = 'none';
+        }
+        return;
+    }
+    
+    if (!typingEl) {
+        typingEl = document.createElement('div');
+        typingEl.id = 'typingIndicator';
+        typingEl.style.cssText = `
+            padding: 8px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            font-size: 12px;
+            color: var(--text-muted);
+            font-style: italic;
+        `;
+        const chatMessages = document.getElementById('chatMessages');
+        if (chatMessages) {
+            chatMessages.parentNode.insertBefore(typingEl, chatMessages.nextSibling);
+        }
+    }
+    
+    const names = typingUsers.map(u => u.display_name).join(', ');
+    const isPlural = typingUsers.length > 1;
+    typingEl.textContent = `${names} ${isPlural ? 'are' : 'is'} typing...`;
+    typingEl.style.display = 'block';
+    
+    // Add blinking dot animation
+    typingEl.innerHTML += '<span style="animation: blink 1s infinite;"> ●</span>';
+}
+
+/**
+ * Poll typing status in conversation
+ */
+async function pollTypingStatus() {
+    if (!currentConversationId) return;
+    
+    try {
+        const response = await fetch(`api/typing_indicator.php?action=get_typing&conversation_id=${currentConversationId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            displayTypingIndicator(data.typing_users);
+        }
+    } catch (error) {
+        console.debug('Typing poll error:', error);
+    }
+}
+
+/**
+ * Update online status in chat header
+ */
+async function updateOnlineStatus() {
+    if (!currentConversationId) return;
+    
+    try {
+        const response = await fetch(`api/online_status.php?action=get_conversation_partner_status&conversation_id=${currentConversationId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const partner = data.partner;
+            const statusEl = document.getElementById('partnerOnlineStatus');
+            const headerTitle = document.querySelector('.chat-header h3');
+            
+            if (headerTitle) {
+                // Create status indicator if doesn't exist
+                let dot = headerTitle.querySelector('.status-dot');
+                if (!dot) {
+                    dot = document.createElement('span');
+                    dot.className = 'status-dot';
+                    dot.style.cssText = `
+                        display: inline-block;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 50%;
+                        margin-right: 8px;
+                        margin-left: -4px;
+                    `;
+                    headerTitle.insertBefore(dot, headerTitle.firstChild);
+                }
+                
+                if (partner.status === 'online') {
+                    dot.style.background = '#10b981';
+                    dot.title = 'Online';
+                } else {
+                    dot.style.background = '#cbd5e1';
+                    dot.title = partner.display_text;
+                }
+            }
+            
+            // Update subtitle if exists
+            if (statusEl) {
+                statusEl.textContent = partner.display_text;
+                statusEl.style.color = partner.status === 'online' ? '#10b981' : 'var(--text-muted)';
+            }
+        }
+    } catch (error) {
+        console.debug('Online status update error:', error);
+    }
+}
+
+/**
+ * Mark messages in a conversation as read
+ * Updates the last_read_at timestamp for the conversation_participants
+ */
+async function markMessagesAsRead(conversationId) {
+    if (!conversationId) return;
+    
+    try {
+        const response = await fetch('api/mark_message_read.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=mark_read&conversation_id=' + conversationId
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            console.log('Messages marked as read');
+            // Update the notification badge after marking as read
+            updateNotificationBadge();
+            // Remove badge from conversation item
+            const convItem = document.querySelector(`[data-conv-id="${conversationId}"]`);
+            if (convItem) {
+                const badge = convItem.querySelector('.badge');
+                if (badge) {
+                    badge.remove();
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error marking messages as read:', error);
+    }
+}
+
+/**
+ * Update notification badge in header
+ * Fetches total unread count and displays it
+ */
+async function updateNotificationBadge() {
+    try {
+        const response = await fetch('api/mark_message_read.php?action=get_unread_count');
+        const data = await response.json();
+        
+        if (data.success) {
+            const badge = document.getElementById('messagesBadge');
+            if (badge) {
+                if (data.unread_count > 0) {
+                    badge.textContent = data.unread_count > 99 ? '99+' : data.unread_count;
+                    badge.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error updating notification badge:', error);
+    }
+}
 
 // Load conversation
 async function loadConversation(conversationId) {
     console.log('Loading conversation:', conversationId);
     currentConversationId = conversationId;
     pinnedMessagesVisible = false;
+    
+    // Mark messages as read for this conversation
+    markMessagesAsRead(conversationId);
     
     // Update UI
     const chatArea = document.getElementById('chatArea');
@@ -26,7 +378,9 @@ async function loadConversation(conversationId) {
     // Show loading state
     chatArea.innerHTML = `
         <div class="chat-header">
-            <h3>Loading conversation...</h3>
+            <div style="flex: 1;">
+                <h3>Loading conversation...</h3>
+            </div>
             <div class="chat-header-actions">
                 <button class="btn btn-secondary btn-sm" onclick="showDetailsModal()" title="Conversation details">ℹ️ Details</button>
                 <button class="btn btn-secondary btn-sm" onclick="togglePinnedMessages()" title="Pinned messages">📌 Pinned</button>
@@ -36,18 +390,18 @@ async function loadConversation(conversationId) {
         <div class="pinned-messages-panel" id="pinnedPanel" style="display: none;">
             <div class="pinned-header">
                 <h4>Pinned Messages</h4>
-                <button onclick="togglePinnedMessages()" style="background: none; border: none; cursor: pointer; font-size: 18px;">✕</button>
+                <button onclick="togglePinnedMessages()" style="background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text-secondary);">✕</button>
             </div>
             <div class="pinned-list" id="pinnedList"></div>
         </div>
         <div class="chat-input">
             <form onsubmit="sendMessage(event)">
-                <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                <label for="fileInput" class="btn btn-secondary btn-sm" style="margin: 0; cursor: pointer;">📎</label>
+                <label for="fileInput" class="btn btn-secondary btn-sm" style="margin: 0; cursor: pointer; flex-shrink: 0;">📎</label>
                 <input type="file" id="fileInput" style="display: none;">
-                <button type="submit" class="btn btn-primary">Send</button>
+                <input type="text" id="messageInput" placeholder="Message..." autocomplete="off">
+                <button type="submit" class="btn btn-primary" style="flex-shrink: 0;">Send</button>
             </form>
-            <div id="filePreview" style="display: none; padding: 8px; background: var(--bg-secondary); border-radius: 8px; margin-top: 8px; font-size: 13px;"></div>
+            <div id="filePreview"></div>
         </div>
     `;
     
@@ -62,13 +416,36 @@ async function loadConversation(conversationId) {
         }
     });
     
+    // Set up typing event listener
+    const messageInput = document.getElementById('messageInput');
+    messageInput.addEventListener('keypress', handleTyping);
+    
     // Load messages and pinned messages
     await loadPinnedMessages();
     loadMessages();
     
+    // Mark messages as delivered immediately
+    markMessagesDelivered(conversationId);
+    
+    // Mark messages as seen
+    markMessagesSeen(conversationId);
+    
     // Start auto-refresh
     if (messageRefreshInterval) clearInterval(messageRefreshInterval);
     messageRefreshInterval = setInterval(refreshMessages, 2000);
+    
+    // Start polling message statuses (every 2 seconds)
+    if (statusPollInterval) clearInterval(statusPollInterval);
+    statusPollInterval = setInterval(pollMessageStatus, 2000);
+    
+    // Start polling typing status (every 1 second)
+    if (typingPollInterval) clearInterval(typingPollInterval);
+    typingPollInterval = setInterval(pollTypingStatus, 1000);
+    
+    // Start polling online status (every 5 seconds)
+    if (onlineStatusInterval) clearInterval(onlineStatusInterval);
+    updateOnlineStatus(); // Initial update
+    onlineStatusInterval = setInterval(updateOnlineStatus, 5000);
 }
 
 // Load messages from API
@@ -200,7 +577,7 @@ function displayMessages(messages) {
     container.scrollTop = container.scrollHeight;
 }
 
-// Create message element
+// Create message element with improved styling
 function createMessageElement(message) {
     const div = document.createElement('div');
     const isOwn = message.sender_id == window.currentUserId;
@@ -208,38 +585,47 @@ function createMessageElement(message) {
     div.setAttribute('data-msg-id', message.id);
     
     const avatar = message.avatar_url 
-        ? `<img src="${escapeHtml(message.avatar_url)}" alt="${message.display_name}">`
-        : `<div class="avatar-placeholder">${message.display_name.charAt(0).toUpperCase()}</div>`;
+        ? `<img src="${escapeHtml(message.avatar_url)}" alt="${message.display_name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`
+        : `<div class="avatar-placeholder" style="display: flex; align-items: center; justify-content: center; font-weight: 600;">${message.display_name.charAt(0).toUpperCase()}</div>`;
     
-    const timeStr = new Date(message.created_at).toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-    });
+    // Format time in more readable way
+    const msgTime = new Date(message.created_at);
+    const now = new Date();
+    let timeStr;
+    
+    if (msgTime.toDateString() === now.toDateString()) {
+        // Today - show time only
+        timeStr = msgTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    } else {
+        // Yesterday or earlier - show date
+        timeStr = msgTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
     
     let content = escapeHtml(message.content);
     if (message.is_unsent) {
-        content = `<em style="color: var(--text-muted);">You unsent this message</em>`;
+        content = `<em style="opacity: 0.6;">You unsent this message</em>`;
     } else if (message.file_url) {
-        content += `<br><a href="${message.file_url}" download="${message.file_name}" style="color: var(--primary); text-decoration: none;">📎 ${escapeHtml(message.file_name)}</a>`;
+        content += `<br><a href="${message.file_url}" download="${message.file_name}" style="color: inherit; text-decoration: underline; opacity: 0.9; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;">📎 ${escapeHtml(message.file_name)}</a>`;
     }
     
     div.innerHTML = `
-        <div class="user-avatar-sm">
+        <div class="user-avatar-sm" style="flex-shrink: 0;">
             ${avatar}
         </div>
-        <div class="message-bubble">
-            <strong>${escapeHtml(message.display_name)}</strong>
-            <p>${content}</p>
+        <div style="display: flex; flex-direction: column; align-items: ${isOwn ? 'flex-end' : 'flex-start'}; flex: 1;">
+            <div class="message-bubble">
+                <strong style="display: none;">${escapeHtml(message.display_name)}</strong>
+                <p>${content}</p>
+            </div>
             <span class="message-time">${timeStr}</span>
         </div>
-        <div class="message-actions">
+        <div class="message-actions" style="display: none;">
             ${isOwn ? `
-                <button class="msg-btn" onclick="editMessage(${message.id})" title="Edit">✏️</button>
-                <button class="msg-btn" onclick="unsendMessage(${message.id})" title="Unsend">↩️</button>
-                <button class="msg-btn" onclick="deleteMessage(${message.id})" title="Delete">🗑️</button>
+                <button class="msg-btn" onclick="editMessage(${message.id})" title="Edit" type="button">✏️</button>
+                <button class="msg-btn" onclick="unsendMessage(${message.id})" title="Unsend" type="button">↩️</button>
+                <button class="msg-btn" onclick="deleteMessage(${message.id})" title="Delete" type="button">🗑️</button>
             ` : ''}
-            <button class="msg-btn" onclick="pinMessage(${message.id})" title="Pin">📌</button>
+            <button class="msg-btn" onclick="pinMessage(${message.id})" title="Pin" type="button">📌</button>
         </div>
     `;
     
@@ -303,6 +689,9 @@ async function sendMessage(e) {
         const msgEl = createMessageElement(data.message);
         container.appendChild(msgEl);
         container.scrollTop = container.scrollHeight;
+        
+        // Update notification badge after sending message
+        updateNotificationBadge();
         
     } catch (error) {
         alert('Failed to send message. Check your connection.');
@@ -594,11 +983,17 @@ async function refreshMessages() {
 
 // Show new message modal
 function showNewMessageModal() {
+    // Use existing modal from HTML
     const modal = document.getElementById('newMessageModal');
+    const userSearch = document.getElementById('userSearch');
+    const userResults = document.getElementById('userResults');
+    
     if (modal) {
+        // Clear previous results
+        userSearch.value = '';
+        userResults.innerHTML = '';
         modal.style.display = 'flex';
-        const input = document.getElementById('userSearch');
-        if (input) input.focus();
+        userSearch.focus();
     }
 }
 
@@ -654,45 +1049,75 @@ function closeModal() {
     }
 }
 
-// Search users
+// Search users for new message modal
 let searchTimeout;
 async function searchUsers(query) {
     clearTimeout(searchTimeout);
     
-    if (!query.trim()) {
-        document.getElementById('userResults').innerHTML = '';
+    const container = document.getElementById('userResults');
+    
+    if (!query || !query.trim()) {
+        container.innerHTML = '';
         return;
     }
     
+    // Show loading state
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 20px;"><p style="margin: 0;">Searching...</p></div>';
+    
     searchTimeout = setTimeout(async () => {
         try {
+            console.log('Searching for:', query);
             const response = await fetch(`api/search_users.php?q=${encodeURIComponent(query)}`);
-            const data = await response.json();
             
-            const container = document.getElementById('userResults');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('Search results:', data);
+            
             container.innerHTML = '';
             
             if (!data.users || data.users.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 20px;">No users found</p>';
+                container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px 20px;">
+                    <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
+                    <p style="margin: 0;">No users found</p>
+                </div>`;
                 return;
             }
             
             data.users.forEach(user => {
                 const avatar = user.avatar_url 
-                    ? `<img src="${escapeHtml(user.avatar_url)}" alt="${user.display_name}">`
-                    : `<div class="avatar-placeholder">${user.display_name.charAt(0).toUpperCase()}</div>`;
+                    ? `<img src="${escapeHtml(user.avatar_url)}" alt="${user.display_name}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">`
+                    : `<div class="avatar-placeholder" style="display: flex; align-items: center; justify-content: center; font-weight: 600; width: 100%; height: 100%;">${user.display_name.charAt(0).toUpperCase()}</div>`;
                 
                 const userEl = document.createElement('div');
-                userEl.className = 'user-item';
-                userEl.style.cursor = 'pointer';
+                userEl.style.cssText = `
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px 16px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    border-bottom: 1px solid var(--border-color);
+                `;
+                
+                userEl.onmouseenter = function() {
+                    this.style.background = 'var(--bg-secondary)';
+                };
+                userEl.onmouseleave = function() {
+                    this.style.background = 'transparent';
+                };
+                
                 userEl.innerHTML = `
-                    <div class="user-avatar-sm">
+                    <div class="user-avatar-sm" style="width: 44px; height: 44px; flex-shrink: 0; background: var(--primary); border-radius: 50%;">
                         ${avatar}
                     </div>
-                    <div class="user-info">
-                        <h5>${escapeHtml(user.display_name)}</h5>
-                        <p class="text-muted">@${escapeHtml(user.username)}</p>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 600; font-size: 15px; margin-bottom: 3px;">${escapeHtml(user.display_name)}</div>
+                        <div style="font-size: 13px; color: var(--text-muted);">@${escapeHtml(user.username)}</div>
                     </div>
+                    <div style="font-size: 20px; opacity: 0.5;">→</div>
                 `;
                 
                 userEl.onclick = () => {
@@ -703,6 +1128,10 @@ async function searchUsers(query) {
             });
         } catch (error) {
             console.error('Search error:', error);
+            document.getElementById('userResults').innerHTML = `<div style="text-align: center; color: var(--danger); padding: 20px;">
+                <p style="margin: 0;">❌ Error searching users</p>
+                <p style="margin: 0; font-size: 12px; color: var(--text-muted);">${error.message}</p>
+            </div>`;
         }
     }, 300);
 }
