@@ -2,6 +2,12 @@
 -- Optimized for PHP/MySQL (XAMPP)
 -- Includes: Users, Posts, Comments, Reactions, Messaging, Reports
 
+CREATE DATABASE IF NOT EXISTS school_social
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
+
+USE school_social;
+
 -- ============================================
 -- USERS & AUTHENTICATION
 -- ============================================
@@ -18,12 +24,14 @@ CREATE TABLE users (
     major VARCHAR(100) DEFAULT NULL,
     status ENUM('online', 'offline', 'away') DEFAULT 'offline',
     last_seen DATETIME DEFAULT NULL,
+    last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_active TINYINT(1) DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_username (username),
     INDEX idx_email (email),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    INDEX idx_last_activity (last_activity)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================
@@ -35,6 +43,7 @@ CREATE TABLE posts (
     user_id INT UNSIGNED NOT NULL,
     content TEXT NOT NULL,
     image_url VARCHAR(500) DEFAULT NULL,
+    video_url VARCHAR(500) DEFAULT NULL,
     is_deleted TINYINT(1) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -107,8 +116,13 @@ CREATE TABLE messages (
     conversation_id INT UNSIGNED NOT NULL,
     sender_id INT UNSIGNED NOT NULL,
     content TEXT NOT NULL,
+    file_url VARCHAR(500) DEFAULT NULL,
+    file_name VARCHAR(255) DEFAULT NULL,
+    file_size INT DEFAULT NULL,
     is_edited TINYINT(1) DEFAULT 0,
     is_deleted TINYINT(1) DEFAULT 0,
+    is_unsent TINYINT(1) DEFAULT 0,
+    unsent_for_all TINYINT(1) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     status ENUM('sent', 'delivered', 'seen') DEFAULT 'sent',
@@ -134,6 +148,47 @@ CREATE TABLE IF NOT EXISTS typing_indicators (
     INDEX idx_conversation_id (conversation_id),
     INDEX idx_user_id (user_id),
     INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE pinned_messages (
+    id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    message_id INT UNSIGNED NOT NULL,
+    conversation_id INT UNSIGNED NOT NULL,
+    pinned_by INT UNSIGNED NOT NULL,
+    pinned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (pinned_by) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_message_per_conversation (message_id, conversation_id),
+    INDEX idx_conversation_id (conversation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE message_edits (
+    id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    message_id INT UNSIGNED NOT NULL,
+    old_content TEXT NOT NULL,
+    edited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    INDEX idx_message_id (message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE user_settings (
+    id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id INT UNSIGNED NOT NULL UNIQUE,
+    theme ENUM('light', 'dark') DEFAULT 'light',
+    read_receipts TINYINT(1) DEFAULT 1,
+    typing_indicator TINYINT(1) DEFAULT 1,
+    online_status_visible TINYINT(1) DEFAULT 1,
+    notifications_enabled TINYINT(1) DEFAULT 1,
+    notification_sound TINYINT(1) DEFAULT 1,
+    notification_mute_until DATETIME DEFAULT NULL,
+    compact_layout TINYINT(1) DEFAULT 0,
+    font_size ENUM('small', 'medium', 'large') DEFAULT 'medium',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_theme (theme)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================
@@ -166,6 +221,7 @@ CREATE TABLE reports (
 -- ============================================
 
 -- View: Get posts with user info and reaction counts
+DROP VIEW IF EXISTS view_posts_with_details;
 CREATE VIEW view_posts_with_details AS
 SELECT 
     p.id,
@@ -175,6 +231,7 @@ SELECT
     u.avatar_url,
     p.content,
     p.image_url,
+    p.video_url,
     p.created_at,
     COUNT(DISTINCT r.id) as reaction_count,
     COUNT(DISTINCT c.id) as comment_count
@@ -184,9 +241,10 @@ LEFT JOIN reactions r ON p.id = r.post_id
 LEFT JOIN comments c ON p.id = c.post_id AND c.is_deleted = 0
 WHERE p.is_deleted = 0
 GROUP BY p.id, p.user_id, u.username, u.display_name, u.avatar_url, 
-         p.content, p.image_url, p.created_at;
+         p.content, p.image_url, p.video_url, p.created_at;
 
 -- View: Get conversation list with last message
+DROP VIEW IF EXISTS view_conversations_with_last_message;
 CREATE VIEW view_conversations_with_last_message AS
 SELECT 
     c.id as conversation_id,
